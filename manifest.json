@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "slovn.chatgpt-lite",
+  "name": "ChatGPT Lite",
+  "version": "0.4.0-dev",
+  "author": "slovn",
+  "description": "Original ChatGPT in a compact native top-bar popover.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "native/Service.qml",
+    "barWidget": "native/BarWidget.qml"
+  },
+  "keepLoaded": true,
+  "barWidget": {
+    "defaultSection": "right",
+    "displayName": "ChatGPT Lite",
+    "description": "Toggle the original ChatGPT popover",
+    "category": "Apps",
+    "allowMultiple": false
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "adapter_version": "1.0.0",
+  "live_structure_verified": false,
+  "live_compatibility": "NOT_VERIFIED",
+  "network_filters": [],
+  "long_conversation_rendering": false,
+  "reason": "Closed-schema live diagnostics are available, but required send/model/conversation structure and compatibility are not verified. Preserve the original site; fixture verification cannot authorize production reduction."
+}

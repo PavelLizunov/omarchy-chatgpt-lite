@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'">
+  <title>Local structural fixture</title>
+</head>
+<body>
+  <main>
+    <header>
+      <button aria-label="Model selector">Fixture model</button>
+      <button aria-label="New chat">New local chat</button>
+    </header>
+    <section role="log" aria-live="polite"><article><p>Completed local fixture response.</p><pre><code>print('fixture')</code></pre></article></section>
+    <form onsubmit="event.preventDefault(); document.querySelector('#feedback').hidden = false">
+      <label for="draft">Local draft</label>
+      <textarea id="draft">Unsent fixture text</textarea>
+      <button type="submit" aria-label="Send message">Local send</button>
+      <output id="feedback" hidden>Local action handled; no network request.</output>
+    </form>
+    <aside aria-label="Suggestions">Optional local suggestions</aside>
+    <aside aria-label="Promotions">Optional local promotion</aside>
+    <aside aria-label="Unrecognized component">Unknown component must stay visible</aside>
+  </main>
+  <div role="dialog" aria-label="Required confirmation"><p>Portalled fixture confirmation stays visible.</p><button>Confirm local action</button></div>
+</body>
+</html>

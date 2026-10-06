@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.so
+*.o
+*.core
+*.png
+*.jpg
+*.webp
+profile/
+cache/
+build/
+.env
+.env.*
+# Local machine/task evidence and personal lifecycle authorization are not public source.
+/AGENTS.md
+/lifecycle-policy.py
+/tests/test_lifecycle_policy.py
+/DESIGN-REVIEW.md
+/ENVIRONMENT.md
+/ITERATION3.md
+/MVP-VERIFICATION.md
+/NATIVE-RUNTIME.md
+/NATIVE-VERIFICATION.md
+/QML-MIGRATION.md
+/STAGE2.md
+/VERIFICATION.md
