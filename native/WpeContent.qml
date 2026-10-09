@@ -1,4 +1,5 @@
 import QtQuick
+import "wpe" as Wpe
 
 // Actual panel content, also loaded by the offscreen actual-consumer fixture.
 Rectangle {
@@ -8,6 +9,7 @@ Rectangle {
     required property color panelForeground
     required property color panelBorder
     property bool fixtureMode: false
+    property bool presented: false
     property string fixtureHtml: ""
     readonly property bool loadError: view.loadState === "FAILED"
     property int panelFontSize: 14
@@ -20,11 +22,11 @@ Rectangle {
 
     objectName: "chatgptPanelContent"
     color: panelBackground
-    // Bound Chromium's scene-graph child during popup map and resize.
+    // Bound the embedded engine's scene-graph child during popup map and resize.
     clip: true
     border.color: panelBorder
     border.width: frameBorderWidth
-    Browser {
+    Wpe.Browser {
         id: view
         anchors.left: parent.left
         anchors.right: parent.right
@@ -36,6 +38,8 @@ Rectangle {
         profile: root.browserProfile
         backgroundColor: root.panelBackground
         fixtureMode: root.fixtureMode
+        fixtureHtml: root.fixtureHtml
+        presented: root.presented
         onAuxiliaryRequested: function(request) { root.auxiliaryRequested(request) }
         onDismissRequested: root.dismissRequested()
     }

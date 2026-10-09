@@ -2,10 +2,14 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import QtWebEngine
 import QtQuick.Dialogs
 import qs.Commons
 import qs.Ui as Ui
+import "resource-module" as Resources
+import "wpe-module" as WpeModule
+import "wpe" as Wpe
 
 // One service-owned warm browser, presented only through an attached bar widget.
 Item {
@@ -19,6 +23,33 @@ Item {
     readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
     readonly property var targetScreen: anchorWindow ? anchorWindow.screen : (fixtureMode ? Quickshell.screens[0] : null)
     property bool expanded: false
+    property int designVariant: 0
+    property int paletteChoice: 0
+    readonly property string paletteName: [qsTr("Desktop"), qsTr("Light"), qsTr("Dark"), qsTr("Forest")][paletteChoice] || qsTr("Desktop")
+    readonly property color panelBackground: paletteChoice === 1 ? "#faf8f2" : paletteChoice === 2 ? "#1e1f2b" : paletteChoice === 3 ? "#10231b" : Color.popups.background
+    readonly property color panelForeground: paletteChoice === 1 ? "#24252a" : paletteChoice === 2 ? "#e1e4f0" : paletteChoice === 3 ? "#d8e5c4" : Color.popups.text
+    readonly property color panelBorder: paletteChoice === 1 ? "#c3c1b7" : paletteChoice === 2 ? "#5f6684" : paletteChoice === 3 ? "#64846d" : Color.popups.border
+    readonly property var rendererPids: {
+        var pids = primaryBrowser ? [primaryBrowser.renderProcessPid] : []
+        for (var i = 0; i < auxiliaries.length; i++) pids.push(auxiliaries[i].browser.renderProcessPid)
+        return pids
+    }
+    property var engineController: null
+    property bool recoveryBusy: false
+    function reloadPage() {
+        if (!recoveryBusy && primaryBrowser) primaryBrowser.reload()
+    }
+    function restartEngine() {
+        if (engineController && !recoveryBusy && !shuttingDown) engineController.restart()
+    }
+    property var servoResources: ({state: "unavailable", scope: "servo-engine"})
+    readonly property var resourcePages: useServo ? servoResources : resourceMonitor.pages
+    readonly property var resourceShell: resourceMonitor.shell
+    Resources.ResourceMonitor {
+        id: resourceMonitor
+        active: root.opened && !root.shuttingDown && !root.useServo
+        rendererPids: root.rendererPids
+    }
     readonly property int availableWidth: targetScreen ? Math.max(1, targetScreen.width - Style.gapsOut * 2) : Style.space(460)
     readonly property int availableHeight: targetScreen ? Math.max(1, targetScreen.height - (anchorWindow ? anchorWindow.height : 32) - Style.gapsOut * 2) : Style.space(560)
     readonly property int popupWidth: expanded ? availableWidth : Math.min(Style.space(460), availableWidth)
@@ -28,18 +59,23 @@ Item {
     // Inert consumers may supply an off-record profile; production owns its disk profile.
     property var suppliedProfile: null
     property bool fixtureMode: false
+    property bool useWpe: !fixtureMode && !useServo
+    // Explicit environment opt-in; no implicit replacement or profile migration.
+    property bool useServo: !fixtureMode && Quickshell.env("CHATGPT_SERVO_NATIVE_SOCKET") !== ""
+    property string servoSocketPath: Quickshell.env("CHATGPT_SERVO_NATIVE_SOCKET") || ""
     property string fixtureHtml: ""
     // Off by default. Enable only for an explicitly consented local capture.
     property bool captureEnabled: false
     Loader {
-        active: root.captureEnabled
+        active: root.captureEnabled && !root.useWpe && !root.useServo
         source: "Capture.qml"
         onLoaded: {
             item.browser = Qt.binding(function() { return root.primaryBrowser })
             item.presented = Qt.binding(function() { return surface.visible })
         }
     }
-    readonly property var ownedProfile: suppliedProfile || (profileLoader.item ? profileLoader.item.profile : null)
+    QtObject { id: servoTransportProfile }
+    readonly property var ownedProfile: suppliedProfile || (useServo ? servoTransportProfile : (profileLoader.item ? profileLoader.item.profile : null))
     readonly property alias visualContent: surface.contentItem
     readonly property var primaryBrowser: content.item ? content.item.browser : null
     property var auxiliaries: []
@@ -63,15 +99,27 @@ Item {
         if (shuttingDown) return
         // Qt WebEngine fatally aborts if the host discarded argv[0] at startup.
         // Refuse before creating any Chromium profile in affected stock hosts.
-        if (!hostCompatible) {
+        if (!useWpe && !useServo && !hostCompatible) {
             startupError = "HOST_ARGUMENTS_EMPTY"
             return
         }
         if (!targetScreen || (!fixtureMode && !anchorWindow)) return
+        if (useServo && engineController && (!servoSocketPath || (primaryBrowser && primaryBrowser.transportError.length > 0))) {
+            if (primaryBrowser && primaryBrowser.transportError.length > 0) engineController.restart()
+            else engineController.start()
+            return
+        }
+        if (useServo && !servoSocketPath) {
+            startupError = "SERVO_TRANSPORT_UNAVAILABLE"
+            return
+        }
+        if ((useWpe || useServo) && !profileReady) profileReady = true
         if (!profileReady) {
             pendingOpen = true
             if (!preparing) {
                 preparing = true
+                startupError = "NONE"
+                prepareDeadline.start()
                 prepare.running = true
             }
             return
@@ -116,6 +164,8 @@ Item {
     function shutdown() {
         if (shuttingDown) return
         shuttingDown = true
+        if (useServo && primaryBrowser) primaryBrowser.shutdownTransport()
+        if (engineController) engineController.stop()
         prepare.running = false
         if (saveDownload.pending) saveDownload.pending.cancel()
         saveDownload.pending = null
@@ -135,6 +185,7 @@ Item {
         window.destroy()
     }
     function createAuxiliary(request, sourceBrowser) {
+        if (useServo) return // No fabricated OAuth/related-window support.
         var source = sourceBrowser || primaryBrowser
         var foregroundSource = source === primaryBrowser ? opened : auxiliaries.some(function(window) {
             return window.visible && window.browser === source
@@ -143,39 +194,73 @@ Item {
                 || (String(request.requestedUrl) !== "" && !content.item.browser.safeUrl(request.requestedUrl))) return
         // Surface ownership also orders whole-root destruction: all views die
         // before the profile holder, including direct host Loader removal.
-        var child = auxiliary.createObject(surface)
+        var child = (useWpe ? wpeAuxiliary : auxiliary).createObject(surface, useWpe ? {sourceBrowser: source} : {})
         if (!child) return
         auxiliaries = auxiliaries.concat([child])
         request.openIn(child.browser)
-        child.visible = true
+        if (!useWpe || fixtureMode) child.visible = true
     }
 
     Process {
         id: prepare
-        command: ["/usr/bin/python", "-B", decodeURIComponent(String(Qt.resolvedUrl("prepare-profile.py")).replace(/^file:\/\//, ""))]
+        command: [decodeURIComponent(String(Qt.resolvedUrl("prepare-profile")).replace(/^file:\/\//, ""))]
+        onRunningChanged: {
+            if (running) prepareDeadline.start()
+            else {
+                prepareDeadline.stop()
+                // FailedToStart has no exited signal in the installed host.
+                if (root.preparing) {
+                    root.preparing = false
+                    root.pendingOpen = false
+                    root.profileReady = false
+                    root.startupError = "PROFILE_PATH_FAILED"
+                }
+            }
+        }
         onExited: function(exitCode, exitStatus) {
             if (root.shuttingDown) return
             root.preparing = false
+            if (root.startupError === "PROFILE_PATH_TIMEOUT") {
+                root.profileReady = false
+                root.pendingOpen = false
+                return
+            }
             root.profileReady = exitCode === 0 && exitStatus === 0
             if (!root.profileReady) root.startupError = "PROFILE_PATH_FAILED"
             if (root.profileReady && root.pendingOpen) root.open({})
             else root.pendingOpen = false
         }
     }
+    Timer {
+        id: prepareDeadline
+        interval: 5000
+        onTriggered: {
+            root.startupError = "PROFILE_PATH_TIMEOUT"
+            root.preparing = false
+            root.pendingOpen = false
+            // Signal only the Process-owned child; late exit cannot revive startup.
+            prepare.signal(9)
+        }
+    }
     IpcHandler {
         target: "slovn.chatgpt-lite"
         function status(): string {
             return JSON.stringify({schema: 1, state: root.opened ? "VISIBLE" : root.browserRunning ? "HIDDEN" : "STOPPED",
-                engine: "QTWEBENGINE", primary_views: root.browserRunning ? 1 : 0,
+                engine: root.useServo ? "SERVO_EXPERIMENTAL" : root.useWpe ? "WPEWEBKIT" : "QTWEBENGINE", primary_views: root.browserRunning ? 1 : 0,
                 auxiliary_views: root.auxiliaries.length,
                 load_state: content.item ? content.item.browser.loadState : "IDLE", reduction: "DISABLED",
-                host_compatible: root.hostCompatible, startup_error: root.startupError,
+                host_compatible: root.hostCompatible, startup_error: root.startupError, recovery_busy: root.recoveryBusy,
+                renderer_pids: root.rendererPids,
                 presentation: "BAR_POPOVER", popup_width: root.popupWidth, popup_height: root.popupHeight,
                 load_error_code: content.item ? content.item.browser.loadErrorCode : 0,
-                popup_visible: surface.visible, anchor_x: surface.anchor.rect.x, anchor_y: surface.anchor.rect.y,
-                appearance: "OMARCHY_CSS", error_banner: content.item ? content.item.loadError : false,
-                expanded: root.expanded, controls_visible: controls.visible})
+                popup_visible: surface.visible, anchor_x: surface.margins.left, anchor_y: surface.margins.top,
+                appearance: "ORIGINAL_SITE", error_banner: content.item ? content.item.loadError : false,
+                expanded: root.expanded, controls_visible: controls.visible,
+                design_variant: root.designVariant + 1, palette: root.paletteName,
+                resources: {pages: root.resourcePages, shared_shell: root.resourceShell}})
         }
+        function reload(): void { root.reloadPage() }
+        function restart(): void { root.restartEngine() }
         function toggleExpanded(): void {
             // Only resize an already open task-owned view; never launch a page.
             if (root.opened) root.toggleExpanded()
@@ -202,7 +287,7 @@ Item {
         onRejected: { if (pending) pending.cancel(); pending = null }
     }
     Connections {
-        target: root.ownedProfile
+        target: (root.useWpe || root.useServo) ? null : root.ownedProfile
         function onDownloadRequested(download) {
             if (root.fixtureMode || root.shuttingDown || !root.opened || saveDownload.pending) {
                 download.cancel()
@@ -226,94 +311,61 @@ Item {
             if (root.targetScreen && Quickshell.screens.indexOf(root.targetScreen) === -1) root.close()
         }
     }
-    PopupWindow {
+    PanelWindow {
         id: surface
-        // A native xdg popup, not a full-screen layer or an Exclusive focus grab.
-        // Inert preview keeps it unmapped and captures the actual content subtree.
+        // Bounded OnDemand surface: no xdg-popup grab, no exclusive focus.
+        // Dictation/virtual-keyboard handoffs must not dismiss the warm browser.
         visible: !root.fixtureMode && root.opened && !!root.anchorWindow
-        color: Color.popups.background
+        screen: root.targetScreen
+        color: root.panelBackground
         implicitWidth: root.popupWidth
         implicitHeight: root.popupHeight
-        grabFocus: true
+        exclusionMode: ExclusionMode.Ignore
+        anchors { top: true; left: true }
+        WlrLayershell.namespace: "slovn-chatgpt-lite"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         onClosed: root.close()
-        anchor {
-            id: popupAnchor
-            window: root.anchorWindow
-            adjustment: PopupAdjustment.Slide
-            edges: Edges.Top | Edges.Left
-            gravity: Edges.Bottom | Edges.Right
-            rect.width: 1
-            rect.height: 1
-            onAnchoring: {
-                if (!root.anchorItem || !root.anchorWindow) return
-                var window = root.anchorWindow
-                var point = window.contentItem.mapFromItem(root.anchorItem, root.anchorItem.width / 2, 0)
-                var position = root.bar ? root.bar.position : "top"
-                var x = point.x - root.popupWidth / 2
-                var y = window.height + Style.gapsOut
-                if (position === "bottom") y = -root.popupHeight - Style.gapsOut
-                else if (position === "left" || position === "right") {
-                    x = position === "left" ? window.width + Style.gapsOut : -root.popupWidth - Style.gapsOut
-                    y = point.y + root.anchorItem.height / 2 - root.popupHeight / 2
-                    y = Math.max(Style.gapsOut, Math.min(y, window.height - root.popupHeight - Style.gapsOut))
-                } else x = Math.max(Style.gapsOut, Math.min(x, window.width - root.popupWidth - Style.gapsOut))
-                popupAnchor.rect.x = Math.round(x)
-                popupAnchor.rect.y = Math.round(y)
-            }
+        TransformWatcher {
+            id: anchorWatcher
+            a: root.anchorWindow ? root.anchorWindow.contentItem : null
+            b: root.anchorItem
         }
+        readonly property point cardOrigin: {
+            anchorWatcher.transform
+            var window = root.anchorWindow
+            var screen = root.targetScreen
+            if (!window || !screen || !root.anchorItem) return Qt.point(0, 0)
+            var point = window.contentItem.mapFromItem(root.anchorItem, root.anchorItem.width / 2, 0)
+            var position = root.bar ? root.bar.position : "top"
+            var x = point.x - root.popupWidth / 2
+            var y = window.height + Style.gapsOut
+            if (position === "bottom") y = screen.height - window.height - root.popupHeight - Style.gapsOut
+            else if (position === "left" || position === "right") {
+                x = position === "left" ? window.width + Style.gapsOut : screen.width - window.width - root.popupWidth - Style.gapsOut
+                y = point.y + root.anchorItem.height / 2 - root.popupHeight / 2
+            }
+            return Qt.point(Math.round(Math.max(Style.gapsOut, Math.min(x, screen.width - root.popupWidth - Style.gapsOut))),
+                            Math.round(Math.max(Style.gapsOut, Math.min(y, screen.height - root.popupHeight - Style.gapsOut))))
+        }
+        margins { left: surface.cardOrigin.x; top: surface.cardOrigin.y }
         Ui.BorderSurface {
             id: popupFrame
             objectName: "chatgptNativeFrame"
             anchors.fill: parent
-            color: Color.popups.background
-            borderSpec: Border.localOrSurfaceSpec("popups", "border", Color.popups.border, Color.popups.border, Math.max(1, Style.space(2)))
+            color: root.panelBackground
+            borderSpec: Border.localOrSurfaceSpec("popups", "border", root.panelBorder, root.panelBorder, Math.max(1, Style.space(2)))
             clip: true
-        Rectangle {
+        Header {
             id: controls
-            objectName: "chatgptPopoverControls"
+            service: root
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.leftMargin: popupFrame.contentLeftInset
             anchors.rightMargin: popupFrame.contentRightInset
             anchors.topMargin: popupFrame.contentTopInset
-            height: expandButton.implicitHeight + Style.spacing.sm * 2
-            color: Color.popups.background
-            clip: true
-            Text {
-                anchors.left: parent.left
-                anchors.leftMargin: Style.spacing.sm
-                anchors.verticalCenter: parent.verticalCenter
-                text: "ChatGPT"
-                textFormat: Text.PlainText
-                color: Color.popups.text
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
-            }
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 1
-                color: Color.popups.border
-            }
-            Ui.Button {
-                id: expandButton
-                objectName: "chatgptExpandButton"
-                anchors.right: parent.right
-                anchors.rightMargin: Style.spacing.sm
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.expanded ? qsTr("Compact") : qsTr("Expand")
-                tooltipText: root.expanded ? qsTr("Return to compact view") : qsTr("Expand to available screen")
-                foreground: Color.popups.text
-                focusable: true
-                bordered: true
-                // Explicit idle outline: the action must not look like loose text.
-                borderSpec: _showFocusRing ? _focusBorderSpec : Border.flat(Color.popups.text, 1)
-                Accessible.name: tooltipText
-                Accessible.role: Accessible.Button
-                onClicked: root.toggleExpanded()
-            }
+            height: implicitHeight
         }
         Loader {
             id: content
@@ -325,14 +377,46 @@ Item {
             anchors.rightMargin: popupFrame.contentRightInset
             anchors.bottomMargin: popupFrame.contentBottomInset
             active: false
-            sourceComponent: Component {
+            sourceComponent: root.useServo ? servoContent : root.useWpe ? wpeContent : chromiumContent
+            Component {
+                id: chromiumContent
                 Content {
                     browserProfile: root.ownedProfile
                     fixtureMode: root.fixtureMode
                     fixtureHtml: root.fixtureHtml
-                    panelBackground: Color.popups.background
-                    panelForeground: Color.popups.text
-                    panelBorder: Color.popups.border
+                    panelBackground: root.panelBackground
+                    panelForeground: root.panelForeground
+                    panelBorder: root.panelBorder
+                    frameBorderWidth: 0
+                    panelFontSize: Style.font.body
+                    onAuxiliaryRequested: function(request) { root.createAuxiliary(request, browser) }
+                    onDismissRequested: root.close()
+                    Component.onCompleted: root.liveViews++
+                    Component.onDestruction: root.viewReleased()
+                }
+            }
+            Component {
+                id: servoContent
+                ServoContent {
+                    socketPath: root.servoSocketPath
+                    presented: root.opened
+                    panelBackground: root.panelBackground
+                    panelForeground: root.panelForeground
+                    panelBorder: root.panelBorder
+                    Component.onCompleted: root.liveViews++
+                    Component.onDestruction: root.viewReleased()
+                }
+            }
+            Component {
+                id: wpeContent
+                WpeContent {
+                    browserProfile: root.ownedProfile
+                    fixtureMode: root.fixtureMode
+                    fixtureHtml: root.fixtureHtml
+                    presented: root.opened
+                    panelBackground: root.panelBackground
+                    panelForeground: root.panelForeground
+                    panelBorder: root.panelBorder
                     frameBorderWidth: 0
                     panelFontSize: Style.font.body
                     onAuxiliaryRequested: function(request) { root.createAuxiliary(request, browser) }
@@ -351,7 +435,7 @@ Item {
             visible: false
             implicitWidth: 620
             implicitHeight: 700
-            title: qsTr("ChatGPT sign-in")
+            title: qsTr("ChatGPT")
             // A layer-shell surface is not an xdg_toplevel parent.
             onClosed: root.releaseAuxiliary(window)
             readonly property alias browser: linked
@@ -360,7 +444,34 @@ Item {
                 anchors.fill: parent
                 profile: root.ownedProfile
                 fixtureMode: root.fixtureMode
-                backgroundColor: Color.popups.background
+                backgroundColor: root.panelBackground
+                onDismissRequested: root.releaseAuxiliary(window)
+                onAuxiliaryRequested: function(request) { root.createAuxiliary(request, linked) }
+                Component.onCompleted: root.liveViews++
+                Component.onDestruction: root.viewReleased()
+            }
+        }
+    }
+    Component {
+        id: wpeAuxiliary
+        FloatingWindow {
+            id: window
+            required property var sourceBrowser
+            visible: false
+            implicitWidth: 620
+            implicitHeight: 700
+            title: qsTr("ChatGPT")
+            readonly property alias browser: linked
+            onClosed: root.releaseAuxiliary(window)
+            Wpe.Browser {
+                id: linked
+                anchors.fill: parent
+                profile: root.ownedProfile
+                relatedView: window.sourceBrowser
+                onReadyToShow: window.visible = true
+                fixtureMode: root.fixtureMode
+                fixtureHtml: root.fixtureHtml
+                presented: window.visible
                 onDismissRequested: root.releaseAuxiliary(window)
                 onAuxiliaryRequested: function(request) { root.createAuxiliary(request, linked) }
                 Component.onCompleted: root.liveViews++
@@ -373,7 +484,23 @@ Item {
     Loader {
         id: profileLoader
         active: false
-        sourceComponent: Component {
+        sourceComponent: root.useWpe ? wpeProfile : chromiumProfile
+        Component {
+            id: wpeProfile
+            WpeModule.WpeSession {
+                id: wpeSession
+                readonly property var profile: wpeSession
+                ephemeral: root.fixtureMode
+                dataPath: root.dataRoot.replace(/-qt$/, "-wpe") + "/profile"
+                cachePath: root.cacheRoot.replace(/-qt$/, "-wpe") + "/cache"
+                Component.onCompleted: {
+                    if (!initialize()) { root.startupError = error; root.pendingOpen = false; return }
+                    Qt.callLater(function() { if (root.pendingOpen) root.open({}) })
+                }
+            }
+        }
+        Component {
+            id: chromiumProfile
             Item {
                 id: holder
                 property var profile: null

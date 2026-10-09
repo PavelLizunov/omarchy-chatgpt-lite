@@ -1,0 +1,347 @@
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3032,8 +3032,6 @@
+ [[package]]
+ name = "gaol"
+ version = "0.2.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "061957ca7a966a39a79ebca393a9a6c7babda10bf9dd6f11d00041558d929c22"
+ dependencies = [
+  "libc",
+  "log",
+@@ -9089,6 +9087,7 @@
+  "sea-query",
+  "sea-query-rusqlite",
+  "serde",
++ "serde_json",
+  "servo-base",
+  "servo-config",
+  "servo-default-resources",
+@@ -9818,6 +9817,7 @@
+  "ohos-window-sys",
+  "raw-window-handle",
+  "rustls",
++ "serde",
+  "serde_json",
+  "servo",
+  "servo-allocator",
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -444,6 +444,7 @@
+ codegen-units = 1
+ 
+ [patch.crates-io]
++gaol = { path = "/gaol-narrow" }
+ # If you need to temporarily test Servo with a local fork of some upstream
+ # crate, add that here. Use the form:
+ #
+--- a/components/constellation/sandboxing.rs
++++ b/components/constellation/sandboxing.rs
+@@ -111,6 +111,11 @@
+     let mut operations = vec![Operation::FileReadAll(PathPattern::Literal(PathBuf::from(
+         "/dev/urandom",
+     )))];
++    // Linux local-font glyph loading occurs in the sandboxed content process.
++    // Public system fonts only, read-only bindings; no user home/config admission.
++    for directory in ["/usr/share/fonts", "/usr/local/share/fonts"] {
++        operations.push(Operation::FileReadAll(PathPattern::Subpath(PathBuf::from(directory))));
++    }
+ 
+     operations.extend(
+         resources::sandbox_access_files()
+--- a/components/net/Cargo.toml
++++ b/components/net/Cargo.toml
+@@ -71,6 +71,7 @@
+ rustls-platform-verifier = { workspace = true }
+ rusqlite = { workspace = true }
+ serde = { workspace = true }
++serde_json = { workspace = true }
+ servo-base = { workspace = true }
+ servo-config = { workspace = true }
+ servo-default-resources = { workspace = true, optional = true }
+--- a/components/net/lib.rs
++++ b/components/net/lib.rs
+@@ -8,6 +8,7 @@
+ pub mod connector;
+ pub mod cookie;
+ pub mod cookie_storage;
++mod cookie_checkpoint;
+ mod decoder;
+ mod devtools;
+ mod disk_cache;
+--- a/components/net/resource_thread.rs
++++ b/components/net/resource_thread.rs
+@@ -268,6 +268,9 @@
+             embedder_proxy,
+         );
+ 
++        // Only public state is persisted. Drop flushes the last snapshot on clean exit.
++        let _cookie_checkpoint = crate::cookie_checkpoint::CookieCheckpoint::start(
++            self.config_dir.clone(), public_http_state.clone());
+         let mut rx_set = GenericReceiverSet::new();
+         let private_id = rx_set.add(private_receiver);
+         let public_id = rx_set.add(public_receiver);
+@@ -666,8 +669,8 @@
+                 if let Some(ref config_dir) = self.config_dir {
+                     let auth_cache = http_state.auth_cache.read();
+                     servo_base::write_json_to_file(&*auth_cache, config_dir, "auth_cache.json");
+-                    let jar = http_state.cookie_jar.read();
+-                    servo_base::write_json_to_file(&*jar, config_dir, "cookie_jar.json");
++                    // Public cookies are written atomically by the checkpoint owner.
++                    // Never overwrite them with the private jar during shutdown.
+                     let hsts = http_state.hsts_list.read();
+                     servo_base::write_json_to_file(&*hsts, config_dir, "hsts_list.json");
+                 }
+--- a/ports/servoshell/Cargo.toml
++++ b/ports/servoshell/Cargo.toml
+@@ -141,6 +141,7 @@
+ gilrs = { workspace = true }
+ glow = { workspace = true }
+ headers = { workspace = true }
++serde = { workspace = true, features = ["derive"] }
+ serde_json = { workspace = true }
+ # For optional feature servo-allocator/use-jemalloc and servo-allocator/allocation-tracking
+ servo-allocator = { workspace = true }
+--- a/ports/servoshell/desktop/app.rs
++++ b/ports/servoshell/desktop/app.rs
+@@ -80,6 +80,7 @@
+ 
+     /// Initialize Application once event loop start running.
+     pub fn init(&mut self, active_event_loop: Option<&ActiveEventLoop>) {
++        super::native_bridge::start(self.waker.clone()).expect("Native transport admission failed");
+         let mut protocol_registry = ProtocolRegistry::default();
+         let _ = protocol_registry.register(
+             "urlinfo",
+@@ -174,6 +175,11 @@
+             return false;
+         };
+ 
++        if let Some(window) = state.windows().first() {
++            if let Some(webview) = window.active_webview() {
++                super::native_bridge::dispatch(state.as_ref(), window, &webview);
++            }
++        }
+         let create_platform_window = |url: Url| self.create_platform_window(url, active_event_loop);
+         if !state.spin_event_loop(Some(&create_platform_window)) {
+             self.state = AppState::ShuttingDown;
+--- a/ports/servoshell/desktop/mod.rs
++++ b/ports/servoshell/desktop/mod.rs
+@@ -15,6 +15,7 @@
+ mod gui;
+ pub(crate) mod headed_window;
+ mod headless_window;
++pub(crate) mod native_bridge;
+ mod keyutils;
+ mod protocols;
+ mod tracing;
+--- a/ports/servoshell/window.rs
++++ b/ports/servoshell/window.rs
+@@ -153,6 +153,9 @@
+             .make_current()
+             .expect("Could not make PlatformWindow RenderingContext current");
+         webview.paint();
++        // Read the freshly painted back buffer before present swaps it out.
++        #[cfg(not(any(target_os = "android", target_env = "ohos")))]
++        crate::desktop::native_bridge::frame(self.platform_window().rendering_context().as_ref());
+         self.platform_window().rendering_context().present();
+     }
+ 
+--- /dev/null
++++ b/components/net/cookie_checkpoint.rs
+@@ -0,0 +1,78 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++//! Bounded, atomic persistence of the public jar. Private browsing never writes it.
++use std::fs;
++use std::io::{self, Write};
++use std::os::unix::fs::{MetadataExt, PermissionsExt};
++use std::path::{Path, PathBuf};
++use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
++use std::thread::{self, JoinHandle};
++use std::time::Duration;
++
++use crate::http_loader::HttpState;
++
++pub(crate) fn atomic_write(directory: &Path, bytes: &[u8]) -> io::Result<()> {
++    let metadata = fs::symlink_metadata(directory)?;
++    if !metadata.is_dir() || metadata.mode() & 0o777 != 0o700 ||
++        metadata.uid() != fs::metadata("/proc/self")?.uid() {
++        return Err(io::ErrorKind::PermissionDenied.into());
++    }
++    let target = directory.join("cookie_jar.json");
++    match fs::symlink_metadata(&target) {
++        Ok(m) if !m.is_file() || m.uid() != metadata.uid() =>
++            return Err(io::ErrorKind::PermissionDenied.into()),
++        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
++        _ => {},
++    }
++    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
++    temporary.as_file().set_permissions(fs::Permissions::from_mode(0o600))?;
++    temporary.write_all(bytes)?;
++    temporary.as_file().sync_all()?;
++    temporary.persist(&target).map_err(|e| e.error)?;
++    fs::File::open(directory)?.sync_all()
++}
++
++pub(crate) struct CookieCheckpoint {
++    stop: Arc<AtomicBool>,
++    worker: Option<JoinHandle<()>>,
++}
++impl CookieCheckpoint {
++    pub(crate) fn start(directory: Option<PathBuf>, public: Arc<HttpState>) -> Self {
++        let stop = Arc::new(AtomicBool::new(false));
++        let flag = stop.clone();
++        let worker = directory.and_then(|directory| thread::Builder::new()
++            .name("cookie-checkpoint".into()).spawn(move || {
++                let mut saved = Vec::new();
++                loop {
++                    // Hold the read lock through the atomic replacement: no stale writer race.
++                    let jar = public.cookie_jar.read();
++                    match serde_json::to_vec_pretty(&*jar) {
++                        Ok(bytes) if bytes != saved => {
++                            if atomic_write(&directory, &bytes).is_ok() {
++                                saved = bytes;
++                            } else {
++                                log::warn!("COOKIE_CHECKPOINT_FAILED");
++                            }
++                        },
++                        Err(_) => log::warn!("COOKIE_CHECKPOINT_SERIALIZE_FAILED"),
++                        _ => {},
++                    }
++                    drop(jar);
++                    if flag.load(Ordering::Acquire) { break; }
++                    thread::park_timeout(Duration::from_secs(2));
++                }
++            }).ok());
++        Self { stop, worker }
++    }
++}
++impl Drop for CookieCheckpoint {
++    fn drop(&mut self) {
++        self.stop.store(true, Ordering::Release);
++        if let Some(worker) = self.worker.take() {
++            worker.thread().unpark();
++            let _ = worker.join();
++        }
++    }
++}
+--- /dev/null
++++ b/ports/servoshell/desktop/native_bridge.rs
+@@ -0,0 +1,115 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
++
++//! Experimental native frame/input transport. No browser screenshots or DOM scraping.
++use std::io::{Read, Write};
++use std::os::unix::fs::PermissionsExt;
++use std::os::unix::net::UnixListener;
++use std::sync::{OnceLock, Mutex, mpsc};
++use std::time::Duration;
++use servo::{EventLoopWaker, InputEvent, WebView};
++use serde::Deserialize;
++
++#[derive(Deserialize)]
++#[serde(tag = "type", deny_unknown_fields)]
++pub enum Command {
++    Input { event: InputEvent },
++    Focus { focused: bool },
++    Resize { width: u32, height: u32 },
++    Reload,
++    Shutdown,
++}
++pub struct Bridge {
++    frames: mpsc::SyncSender<Vec<u8>>,
++    commands: Mutex<mpsc::Receiver<Command>>,
++}
++static BRIDGE: OnceLock<Bridge> = OnceLock::new();
++
++pub fn start(waker: Box<dyn EventLoopWaker>) -> std::io::Result<()> {
++    let Some(path) = std::env::var_os("CHATGPT_SERVO_NATIVE_SOCKET") else { return Ok(()); };
++    let path = std::path::PathBuf::from(path);
++    if !path.is_absolute() || path.exists() { return Err(std::io::ErrorKind::InvalidInput.into()); }
++    let parent = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
++    let metadata = std::fs::symlink_metadata(parent)?;
++    use std::os::unix::fs::MetadataExt;
++    if !metadata.is_dir() || metadata.mode() & 0o777 != 0o700 || metadata.uid() != unsafe { libc::getuid() } {
++        return Err(std::io::ErrorKind::PermissionDenied.into());
++    }
++    let listener = UnixListener::bind(&path)?;
++    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
++    let (frame_tx, frame_rx) = mpsc::sync_channel::<Vec<u8>>(1);
++    let (command_tx, command_rx) = mpsc::sync_channel::<Command>(64);
++    if BRIDGE.set(Bridge { frames: frame_tx, commands: Mutex::new(command_rx) }).is_err() {
++        return Err(std::io::ErrorKind::AlreadyExists.into());
++    }
++    std::thread::Builder::new().name("native-transport".into()).spawn(move || {
++        // The owned service/cgroup bounds lifetime. One private connection; no retries.
++        let Ok((mut output, _)) = listener.accept() else { return; };
++        drop(listener);
++        let _ = std::fs::remove_file(path);
++        let Ok(mut input) = output.try_clone() else { return; };
++        let _ = output.set_write_timeout(Some(Duration::from_millis(500)));
++        std::thread::spawn(move || {
++            loop {
++                let mut length = [0u8; 4];
++                if input.read_exact(&mut length).is_err() { break; }
++                let length = u32::from_be_bytes(length) as usize;
++                if length == 0 || length > 16384 { break; }
++                let mut bytes = vec![0; length];
++                if input.read_exact(&mut bytes).is_err() { break; }
++                let command = match serde_json::from_slice::<Command>(&bytes) {
++                    Ok(command) => command,
++                    Err(_) => { eprintln!("NATIVE_INPUT_PARSE_FAILED"); break; }
++                };
++                if command_tx.try_send(command).is_err() { break; }
++                waker.wake();
++            }
++            // Loss of the sole owned consumer must not leave an orphan engine.
++            let _ = command_tx.try_send(Command::Shutdown);
++            waker.wake();
++        });
++        while let Ok(frame) = frame_rx.recv() {
++            if output.write_all(&frame).is_err() { break; }
++        }
++    })?;
++    Ok(())
++}
++
++pub fn dispatch(state: &crate::running_app_state::RunningAppState, window: &crate::window::ServoShellWindow, webview: &WebView) {
++    let Some(bridge) = BRIDGE.get() else { return; };
++    let Ok(commands) = bridge.commands.lock() else { return; };
++    for _ in 0..64 {
++        let Ok(command) = commands.try_recv() else { break; };
++        match command {
++            Command::Input { event } => { webview.notify_input_event(event); },
++            Command::Focus { focused } => webview.set_focused(focused),
++            Command::Resize { width, height } if (100..=2048).contains(&width) && (100..=2048).contains(&height) => {
++                let size = servo::DeviceIntSize::new(width as i32, height as i32);
++                window.platform_window().request_resize(webview, size);
++                window.platform_window().rendering_context().resize(dpi::PhysicalSize::new(width, height));
++            },
++            Command::Resize { .. } => {},
++            Command::Reload => webview.reload(),
++            Command::Shutdown => state.schedule_exit(),
++        }
++    }
++}
++
++pub fn frame(context: &dyn servo::RenderingContext) {
++    let Some(bridge) = BRIDGE.get() else { return; };
++    let size = context.size();
++    if size.width == 0 || size.height == 0 || size.width > 2048 || size.height > 2048 { return; }
++    let rectangle = servo::DeviceIntRect::from_origin_and_size(
++        servo::DeviceIntPoint::zero(), servo::DeviceIntSize::new(size.width as i32, size.height as i32));
++    let Some(image) = context.read_to_image(rectangle) else { return; };
++    let pixels = image.into_raw();
++    if pixels.len() != size.width as usize * size.height as usize * 4 { return; }
++    let mut packet = Vec::with_capacity(16 + pixels.len());
++    packet.extend_from_slice(b"SV01");
++    packet.extend_from_slice(&size.width.to_be_bytes());
++    packet.extend_from_slice(&size.height.to_be_bytes());
++    packet.extend_from_slice(&(pixels.len() as u32).to_be_bytes());
++    packet.extend_from_slice(&pixels);
++    let _ = bridge.frames.try_send(packet); // One pending frame; drop stale visual updates.
++}

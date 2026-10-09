@@ -1,0 +1,24 @@
+{
+  "upstream": "https://github.com/servo/servo",
+  "revision": "aac43a3f31a259f04a574f5ec4e959c943ad7cc7",
+  "sourceArchiveSha256": "68b7d73aa4eb1c9016c5da30c279a96777d072d3f8d6f2444cf2db9b6d35ed24",
+  "changedPaths": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "components/constellation/sandboxing.rs",
+    "components/net/Cargo.toml",
+    "components/net/cookie_checkpoint.rs",
+    "components/net/lib.rs",
+    "components/net/resource_thread.rs",
+    "ports/servoshell/Cargo.toml",
+    "ports/servoshell/desktop/app.rs",
+    "ports/servoshell/desktop/mod.rs",
+    "ports/servoshell/desktop/native_bridge.rs",
+    "ports/servoshell/window.rs"
+  ],
+  "engineSelected": false,
+  "binaryIncluded": false,
+  "profileIncluded": false,
+  "buildReproduced": false,
+  "notes": "Local experiment snapshot. Patch retains original build-container /gaol-narrow dependency path. No production-readiness claim."
+}

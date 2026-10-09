@@ -1,0 +1,11 @@
+[Unit]
+Description=ChatGPT Lite private Servo engine
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/node /home/slovn/.local/share/chatgpt-servo-repair-Ar9ArjX8/live-launch.mjs
+Restart=no
+TimeoutStopSec=10
+KillMode=control-group
+UMask=0077
+LimitCORE=0

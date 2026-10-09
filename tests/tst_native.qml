@@ -62,28 +62,18 @@ Item {
             verify(!strip.visible)
             compare(strip.height, 0)
             compare(browser.height, readyHeight)
+            compare(browser.userScripts.collection.length, 0)
             var appearance = null
             browser.runJavaScript("getComputedStyle(document.body).backgroundColor", function(value) { appearance = value })
-            tryVerify(function() { return appearance === "rgb(16, 19, 21)" }, 3000)
-            browser.themeBackground = "#fffbea"
-            browser.themeForeground = "#161616"
-            appearance = null
-            browser.runJavaScript("getComputedStyle(document.body).backgroundColor", function(value) { appearance = value })
-            tryVerify(function() { return appearance === "rgb(255, 251, 234)" }, 3000)
+            tryVerify(function() { return appearance === "rgba(0, 0, 0, 0)" }, 3000)
+            consumer.item.panelBackground = "#fffbea"
+            consumer.item.panelForeground = "#161616"
             var surfaces = null
             browser.runJavaScript("['suggestions','composer','surface'].map(id => getComputedStyle(document.getElementById(id)).backgroundColor).join('|')", function(value) { surfaces = value })
-            tryVerify(function() { return surfaces === "rgb(255, 251, 234)|rgb(255, 251, 234)|rgb(255, 251, 234)" }, 3000)
-            var actionColor = null
-            browser.runJavaScript("getComputedStyle(document.getElementById('send')).backgroundColor", function(value) { actionColor = value })
-            tryVerify(function() { return actionColor === "rgb(22, 22, 22)" }, 3000)
-            browser.runJavaScript("document.getElementById('slovn-chatgpt-theme').remove(); true", function() {})
-            browser.fixtureMode = false
-            browser.applyTheme()
+            tryVerify(function() { return surfaces === "rgb(255, 255, 255)|rgb(255, 255, 255)|rgb(255, 255, 255)" }, 3000)
             var admitted = null
             browser.runJavaScript("document.getElementById('slovn-chatgpt-theme') === null", function(value) { admitted = value })
             tryVerify(function() { return admitted === true }, 3000)
-            browser.fixtureMode = true
-            browser.applyTheme()
             var result = null
             browser.runJavaScript("document.getElementById('draft').value", function(value) { result = value })
             tryVerify(function() { return result !== null }, 3000)

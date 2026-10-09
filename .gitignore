@@ -1,7 +1,6 @@
-__pycache__/
-*.py[cod]
 *.so
 *.o
+/native/prepare-profile
 *.core
 *.png
 *.jpg
@@ -13,8 +12,8 @@ build/
 .env.*
 # Local machine/task evidence and personal lifecycle authorization are not public source.
 /AGENTS.md
-/lifecycle-policy.py
-/tests/test_lifecycle_policy.py
+/lifecycle-policy.mjs
+/tests/lifecycle-checks.mjs
 /DESIGN-REVIEW.md
 /ENVIRONMENT.md
 /ITERATION3.md

@@ -1,0 +1,2 @@
+module Slovn.ChatGPTServo
+plugin chatgptservo

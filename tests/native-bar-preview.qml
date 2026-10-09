@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtWebEngine
 import QtTest
+import Quickshell.Wayland
 import qs.Commons
 import "../native" as Candidate
 
@@ -14,6 +15,9 @@ Rectangle {
     property string previewState: "ready"
     property string previewPalette: "dark"
     property bool previewExpanded: false
+    property int previewVariant: 0
+    property int previewPaletteChoice: 0
+    property bool telemetryPassed: false
     property bool palettePassed: false
     property bool buttonClickPassed: false
     property bool auxiliaryCheckPassed: false
@@ -29,6 +33,9 @@ Rectangle {
     }
     property var retainedBrowser: null
     property var retainedProfile: null
+    property var inertProfile: null
+    property bool dictationCheckPassed: false
+    TextInput { id: otherFocus; visible: false }
     QtObject {
         id: inertBar
         property bool vertical: false
@@ -49,9 +56,12 @@ Rectangle {
     WebEngineProfilePrototype { id: prototype; httpCacheType: WebEngineProfile.MemoryHttpCache }
     Candidate.Service {
         id: service
-        suppliedProfile: prototype.instance()
+        suppliedProfile: root.inertProfile
         profileReady: true
         fixtureMode: true
+        captureEnabled: false
+        designVariant: root.previewVariant
+        paletteChoice: root.previewPaletteChoice
         fixtureHtml: "<!doctype html><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'\"><style>body{font:16px sans-serif;margin:20px;background:#101315;color:#cacccc}input{box-sizing:border-box;width:100%;padding:10px}pre{white-space:pre-wrap}</style><h2>Inert ChatGPT fixture</h2><p>Original browser component. No account or network.</p><pre>const answer = 42;</pre><style>.bg-token-bg-elevated-secondary,.composer-shell{background:#fff;padding:12px}</style><div class='bg-token-bg-elevated-secondary'>Inert elevated surface</div><div class='composer-shell' data-composer-surface='true'><label>Draft<input value='Retained inert draft'></label></div>"
     }
     Candidate.BarWidget {
@@ -85,24 +95,62 @@ Rectangle {
             if (++settled === 15) {
                 root.retainedBrowser = service.primaryBrowser
                 root.retainedProfile = service.ownedProfile
+                var barSvg = root.visualObject(widget.trigger, "chatgptBarSvg")
+                if (!widget.trigger.hasVisualContent || !widget.trigger.visible
+                        || widget.trigger.opacity < 0.99 || !barSvg || barSvg.status !== Image.Ready
+                        || barSvg.width <= 0 || barSvg.height <= 0) return
+                var header = root.visualObject(service.visualContent, "chatgptPopoverControls")
+                if (header.height !== (service.designVariant === 1 ? 92 : 72)) return
+                for (var child = 0; child < header.children.length; child++)
+                    if (header.children[child].text !== undefined && String(header.children[child].text).startsWith("Shared shell:")) return
+                if (service.primaryBrowser.userScripts.collection.length !== 0) return
+                for (var h = 0; h < header.resources.length; h++)
+                    if (header.resources[h].text !== undefined && String(header.resources[h].text).startsWith("RAM is resident")) return
+                var variantButton = root.visualObject(service.visualContent, "chatgptVariantButton")
+                var paletteButton = root.visualObject(service.visualContent, "chatgptPaletteButton")
+                if (!variantButton || !paletteButton) return
+                for (var cycle = 0; cycle < 3; cycle++) pointer.mouseClick(variantButton)
+                if (service.designVariant !== root.previewVariant) return
+                for (var tone = 0; tone < 4; tone++) pointer.mouseClick(paletteButton)
+                if (service.paletteChoice !== root.previewPaletteChoice) return
                 var compactWidth = service.popupWidth
                 var compactHeight = service.popupHeight
                 var button = root.visualObject(service.visualContent, "chatgptExpandButton")
-                if (!button || button.text !== "Expand") return
+                if (!button || button.actionName !== "Expand") return
                 pointer.mouseClick(button)
-                if (!service.expanded || button.text !== "Compact"
+                if (!service.expanded || button.actionName !== "Compact"
                         || service.popupWidth !== service.availableWidth
                         || service.popupHeight !== service.availableHeight) return
                 pointer.mouseClick(button)
-                if (service.expanded || button.text !== "Expand"
+                if (service.expanded || button.actionName !== "Expand"
                         || service.popupWidth !== compactWidth || service.popupHeight !== compactHeight) return
                 button.forceActiveFocus()
                 pointer.keyClick(Qt.Key_Space)
-                if (!service.expanded || button.text !== "Compact") return
+                if (!service.expanded || button.actionName !== "Compact") return
                 button.forceActiveFocus()
                 pointer.keyClick(Qt.Key_Return)
-                if (service.expanded || button.text !== "Expand") return
+                if (service.expanded || button.actionName !== "Expand") return
                 root.buttonClickPassed = true
+                var closeButton = root.visualObject(service.visualContent, "chatgptCloseButton")
+                if (!closeButton || service.popup.WlrLayershell.keyboardFocus !== WlrKeyboardFocus.OnDemand) return
+                service.primaryBrowser.forceActiveFocus()
+                pointer.keyClick(Qt.Key_Insert)
+                otherFocus.forceActiveFocus()
+                service.primaryBrowser.forceActiveFocus()
+                pointer.keyClick(Qt.Key_Insert, Qt.ShiftModifier)
+                if (!service.opened || service.primaryBrowser !== root.retainedBrowser) return
+                pointer.mouseClick(closeButton)
+                if (service.opened || service.popup.WlrLayershell.keyboardFocus !== WlrKeyboardFocus.None) return
+                service.open({})
+                closeButton.forceActiveFocus()
+                pointer.keyClick(Qt.Key_Return)
+                if (service.opened) return
+                service.open({})
+                closeButton.forceActiveFocus()
+                pointer.keyClick(Qt.Key_Space)
+                if (service.opened) return
+                service.open({})
+                root.dictationCheckPassed = service.primaryBrowser === root.retainedBrowser
                 if (root.previewExpanded) pointer.mouseClick(button)
                 // Actual owned FloatingWindow/Browser, with inert request handoff.
                 service.createAuxiliary({requestedUrl: "about:blank", openIn: function(view) {
@@ -148,12 +196,27 @@ Rectangle {
                         && service.ownedProfile === root.retainedProfile && value === "Retained inert draft"
                         && inertBar.activePopout === service
                     service.primaryBrowser.runJavaScript("getComputedStyle(document.body).backgroundColor", function(color) {
-                        root.palettePassed = color === (root.previewPalette === "light"
-                            ? "rgb(255, 251, 234)" : "rgb(16, 19, 21)")
+                        // Native palette changes must not recolor the website.
+                        root.palettePassed = color === "rgb(16, 19, 21)"
                     })
                 })
             }
-            if (settled > 30 && root.checkPassed && root.palettePassed && root.buttonClickPassed && root.auxiliaryCheckPassed) {
+            if (settled > 15 && !root.checkPassed && root.auxiliaryCheckPassed) {
+                // Deferred auxiliary destruction must settle before checking exact live views.
+                service.primaryBrowser.runJavaScript("document.querySelector('input').value", function(value) {
+                    root.checkPassed = service.opened && widget.opened && service.liveViews === 1
+                        && service.primaryBrowser === root.retainedBrowser
+                        && service.ownedProfile === root.retainedProfile && value === "Retained inert draft"
+                        && inertBar.activePopout === service
+                })
+            }
+            if (settled === 80) console.log("FIXTURE_STATE " + JSON.stringify({checks:root.checkPassed, palette:root.palettePassed,
+                buttons:root.buttonClickPassed, auxiliary:root.auxiliaryCheckPassed, dictation:root.dictationCheckPassed,
+                pages:service.resourcePages, pids:service.rendererPids}))
+            root.telemetryPassed = service.resourcePages.state === "ready"
+                && typeof service.resourcePages.cpuPercent === "number"
+                && service.resourcePages.rssMiB > 0 && service.resourceShell.state === "ready"
+            if (settled > 30 && root.telemetryPassed && root.checkPassed && root.palettePassed && root.buttonClickPassed && root.auxiliaryCheckPassed && root.dictationCheckPassed) {
                 if (root.previewState === "error") service.primaryBrowser.loadState = "FAILED"
                 else if (root.previewState === "loading") service.primaryBrowser.loadState = "LOADING"
                 else if (root.previewState === "recovered") {
@@ -172,6 +235,8 @@ Rectangle {
         Color.popups.background = Color.background
         Color.popups.text = Color.foreground
         Color.popups.border = Color.foreground
+        root.inertProfile = prototype.instance()
+        if (!root.inertProfile || !root.inertProfile.offTheRecord) return
         widget.trigger.triggerPress(Qt.LeftButton)
     }
 }

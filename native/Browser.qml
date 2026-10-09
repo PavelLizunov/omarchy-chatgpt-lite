@@ -1,38 +1,13 @@
 import QtQuick
 import QtWebEngine
 import QtQuick.Dialogs
-import "Theme.js" as Theme
 
-// Original-site view; only appearance CSS is injected, with no page-data export.
+// Original-site view. No injected scripts or website appearance overrides.
 WebEngineView {
     id: root
     property bool fixtureMode: false
     property string loadState: "IDLE"
     property int loadErrorCode: 0
-    property bool themeEnabled: false
-    property color themeBackground: backgroundColor
-    property color themeForeground: "#cacccc"
-    property color themeBorder: "#707880"
-    function cssColor(value) {
-        function byte(channel) { return Math.round(channel * 255).toString(16).padStart(2, "0") }
-        return "#" + byte(value.r) + byte(value.g) + byte(value.b)
-    }
-    readonly property string themeSource: themeEnabled ? Theme.source(cssColor(themeBackground),
-        cssColor(themeForeground), cssColor(themeBorder), fixtureMode) : ""
-    function applyTheme() {
-        // No asynchronous QML callback: page destruction can invalidate its engine.
-        if (themeSource && loadState === "SUCCEEDED")
-            runJavaScript(themeSource, WebEngineScript.ApplicationWorld)
-    }
-    onThemeSourceChanged: applyTheme()
-    userScripts.collection: [{
-        name: "slovn-chatgpt-appearance",
-        injectionPoint: WebEngineScript.DocumentReady,
-        worldId: WebEngineScript.ApplicationWorld,
-        runsOnSubFrames: false,
-        sourceCode: root.themeSource
-    }]
-    onLoadStateChanged: if (loadState === "SUCCEEDED") applyTheme()
     signal auxiliaryRequested(var request)
     signal dismissRequested()
     signal loadFailed()
