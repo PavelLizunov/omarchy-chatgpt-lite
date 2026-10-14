@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const root = resolve(process.argv[2] || dirname(dirname(fileURLToPath(import.meta.url))));
 const read = name => readFileSync(resolve(root, name), 'utf8');
@@ -22,4 +23,28 @@ assert(close.includes('opened = false'));
 assert(!/content\.active\s*=\s*false|profileLoader\.active\s*=\s*false|shutdown\(/.test(close),
   'Ordinary hide must not destroy the retained browser/profile');
 assert(read('native/Browser.qml').includes('lifecycleState: WebEngineView.LifecycleState.Active'));
-console.log('PASS speed-first documentation and retained-browser source guards; not measured latency or release acceptance');
+
+const wpeExpression = service.match(/property bool useWpe: ([^\n]+)/)?.[1];
+assert(wpeExpression, 'Engine selection binding is required');
+const chooseWpe = new Function('fixtureMode', 'useServo', 'Quickshell', `return ${wpeExpression}`);
+for (const [fixture, servo, engine, expected] of [
+  [false, false, '', true], [false, false, 'chromium', false],
+  [false, false, 'unknown', true], [false, true, 'chromium', false],
+  [true, false, '', false], [true, false, 'chromium', false]
+]) assert.equal(chooseWpe(fixture, servo, {env: name => {
+  assert.equal(name, 'CHATGPT_LITE_ENGINE'); return engine;
+}}), expected);
+
+const launcher = resolve(root, 'native/chromium-env.sh');
+const args = ['two words', '', '$(not-a-command)', '--literal=;'];
+for (const previous of ['', '--lang=en-US']) {
+  const run = spawnSync(launcher, [process.execPath, '-e',
+    'console.log(JSON.stringify({engine:process.env.CHATGPT_LITE_ENGINE,flags:process.env.QTWEBENGINE_CHROMIUM_FLAGS,args:process.argv.slice(1)}))',
+    '--', ...args], {encoding: 'utf8', timeout: 5000,
+    env: {...process.env, CHATGPT_LITE_ENGINE: 'old', QTWEBENGINE_CHROMIUM_FLAGS: previous}});
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(JSON.parse(run.stdout), {engine: 'chromium',
+    flags: `${previous ? previous + ' ' : ''}--site-per-process`, args});
+}
+assert.equal(spawnSync(launcher, [], {timeout: 5000}).status, 64);
+console.log('PASS speed-first guards, explicit engine selection and native launcher argv/environment; not measured latency or release acceptance');

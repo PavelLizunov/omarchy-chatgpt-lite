@@ -11,8 +11,9 @@ existing Omarchy shell. This is a research checkpoint, not a working release.
 - The Chromium path already retains its browser when hidden. Measure that warm
   path separately from cold startup, cached process restart and page Reload.
 - WPE, Servo and Ladybird remain experiments, not accepted replacements.
-- A separate saved-response rendering failure also appeared in Chromium; its
-  cause remains unresolved. A fast empty or failed page is not a successful result.
+- Strict site isolation passed six saved-response phases, including three Reloads,
+  in a finite VM screen. Cached startup still took 97–118 seconds; this is a
+  mitigation candidate, not a proven universal fix or a speedup ratio.
 - The target is a stable, speed-verified shared-shell configuration.
   No candidate has demonstrated it.
 
@@ -23,11 +24,12 @@ See [engine status](docs/engine-status.md) for the handoff.
 - `native/`: shared QML UI, engine adapters, C++ helpers and lifecycle scripts.
 - `engines/servo/`: pinned upstream patch, modified gaol source and original
   development launcher. See its [snapshot guide](engines/servo/README.md).
-- `tests/`: existing historical checks and fixtures. Retained for recovery;
-  this cleanup does not run or extend them.
+- `tests/`: retained profile, UI, transport and evidence checks, including the
+  Chromium startup policy. Static/fixture checks are not release acceptance.
 - `Makefile`: helper and module build targets. No complete browser installer.
 - `manifest.json`: experimental plugin metadata. The source entry defaults to
-  WPE; the installed local Servo trial is a separate copy.
+  WPE unless the explicit Chromium startup wrapper is used. The installed local
+  Servo trial is a separate copy. See [startup policy](docs/engine-status.md#chromium-startup-policy).
 
 ## Development boundary
 
@@ -39,8 +41,8 @@ Source checkout:
 
 Omarchy loads an independent installed copy under
 `~/.config/omarchy/plugins/slovn.chatgpt-lite`. Saving or pushing source does not
-update the running plugin. This cleanup does not deploy, restart services,
-change profiles, run builds or choose an engine.
+update the running plugin. The current VM-tested startup policy is opt-in;
+its publication does not deploy or switch the running engine.
 
 The experiment uses Omarchy 4.0.4, Quickshell 0.3.1 and Qt 6.11.2. The local
 host and Servo runtime are not portable packages. Do not treat archived launchers

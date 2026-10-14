@@ -71,6 +71,62 @@ one root cause or a proven repair. Its 64 slightly negative timestamp intervals
 are retained, so the offline summary uses sample counts, not CPU-time percentages.
 No numerical RAM threshold was used to admit or reject this speed screen.
 
+## Strict site isolation continuation
+
+One subsequent Qt Reload exposed `Timed out waiting for the DIL runner worker`.
+The matching public website asset has a 10-second worker-readiness deadline;
+it pauses while the document is hidden and rearms with a full budget when visible.
+This identifies that occurrence's immediate failure, not why readiness was late.
+Large main-thread tasks and the historical failures are not a proven common cause.
+
+A native-window/page-visibility binding was tested and reverted: startup remained
+slow and ordinary foreground Reload still failed. Its warm observations did not
+establish fresh consumer acceptance. The original `Browser.qml` was restored.
+
+Qt 6.11.2 source defaults strict site isolation off. A sequential comparison used
+byte-identical copies of one stopped task-owned profile/cache and the same native
+browser, viewport and observers. Ordinary Qt failed both 180-second readiness
+windows, with both answers replaced by fallbacks. Adding `--site-per-process`
+rendered the exact short and long responses in 97.5 seconds and Reload in 41.6.
+A separate bounded confirmation passed at 118.0 seconds, then two actual Reloads
+at 68.7 and 109.8 seconds. The repository startup wrapper subsequently passed
+another cached start at 101.3 seconds. No new model submissions were made.
+
+Iframe debugging targets appeared during the isolated task phases. Child-domain
+observer requests also timed out, so exact DIL frame/process placement and the
+worker-delay cause remain unconfirmed. Sequential server/VM/cache effects prevent
+a precise speedup ratio. Six successful saved-response phases are useful bounded
+mitigation evidence, not a stable distribution or permanent repair guarantee.
+
+Four retained-page cycles passed renderer/document/content/freshness checks.
+Qt frame notifications took 41–253 ms; fresh JavaScript acknowledgments took
+77–169 ms. These are not physical input-to-photon or complete-first-frame timings.
+Native post-warm images are separate evidence. Wayland keyboard input after
+controlled DOM focus entered a test draft, preserved it across hiding/reopening,
+and cleared only that unchanged draft. Full shared-shell input routing, fresh
+inference, many-turn history, voice and current workstation GPU remain unverified.
+
+The current inert Content/Browser preview rendered with contained geometry, but
+strict offscreen diagnostics failed on Vulkan/GPU warnings. The original native
+browser test baseline also remains red; targeted checks do not replace that gate.
+
+## Chromium startup policy
+
+`native/chromium-env.sh HOST [ARGUMENT ...]` is an opt-in startup prefix for the
+existing managed compatible host. It sets `CHATGPT_LITE_ENGINE=chromium`, appends
+`--site-per-process` to existing QtWebEngine flags and `exec`s the supplied argv.
+The source service selects Chromium for that opt-in; explicit Servo selection
+still takes precedence and the default WPE path is unchanged. Engine-scoped
+profiles are retained; the wrapper performs no authentication migration.
+
+The wrapper adds no debugger, sandbox exception, website patch, service or
+background process. The caller retains host selection and single-owner lifecycle.
+It was executed by the VM browser consumer with observed process environment,
+correct content, native typing and retained-draft checks. Its argv/environment
+and source engine selection are covered by `node tests/performance-goal.mjs`.
+It does not build a compatible host or assemble/install the plugin. Installing
+source files alone would not change an already-running Chromium process.
+
 ## Saved source and local state
 
 The pre-cleanup checkpoint is `0bb0a410255bda7117d9377e22f745b1aa464b75`.
@@ -78,26 +134,31 @@ The [Servo archive](../engines/servo/README.md) includes the complete 12-file di
 against pinned upstream and the modified gaol source. It does not include the
 multi-gigabyte build tree, engine executable or private profile.
 
-The installed local plugin uses `servo-candidate-08/ServoService.qml`. Source
-`manifest.json` still points to `native/Service.qml`; these are not identical
-installations. The installed service was observed as hidden
-`SERVO_EXPERIMENTAL` with `host_compatible: false`. Its recorded patched-host
-identity predates the installed Quickshell/Qt versions. Compatibility with the
-current host is unverified; that flag alone does not prove the old Qt argument
-bug still exists. This is separate from the retired memory target.
-VM browser-component checks do not establish installed shared-shell acceptance. This documentation update does not
-switch the running engine.
+The installed local plugin's service entry point is
+`~/.config/omarchy/plugins/slovn.chatgpt-lite/servo-candidate-08/ServoService.qml`.
+Source `manifest.json` still points to `native/Service.qml`; these are not
+identical installations. Fresh read-only IPC still reports hidden
+`SERVO_EXPERIMENTAL` with `host_compatible: false`. In the installed service that
+field comes from `Qt.application.arguments.length > 0`, not the disk identity
+file: the running service's argument-readiness guard is not satisfied. Selecting
+Chromium in that host would be refused by the existing guard. Its patched-host
+identity also predates the installed Quickshell/Qt versions; that separate fact
+does not identify the loaded binary's exact defect or prove a replacement host
+compatible. This is unrelated to the retired memory target.
+VM browser-component checks do not establish installed shared-shell acceptance.
+The source startup policy has not been installed in the workstation host, the
+running engine has not switched, and no workstation test window was opened.
 
 The original local Servo workspace is
 `~/.local/share/chatgpt-servo-repair-Ar9ArjX8`. It remains untouched for recovery.
 Private historical reports and generated checkout outputs were moved to
 `~/.hygiene/omarchy-chatgpt-lite/save-clean-20261009/local-archive/`.
 
-## Scope of this checkpoint
+## Historical cleanup checkpoint
 
-Engine development, builds, tests and security-review campaigns are paused at the
-user's request. Existing guards are preserved, not disabled. Existing test source
-is retained rather than destroyed. No background optimization campaign is running.
-The next work should resolve engine feasibility before expanding ancillary
-verification or claiming a finished plugin. No live-site functionality,
-performance or release-readiness claim follows from a successful GitHub push.
+The save-and-clean checkpoint `f92d74210f48b909d0fd91a060701a4fde029738` paused
+engine development, builds and tests for that earlier operation. This describes
+its historical scope, not the current speed-first request. Existing guards and
+test sources remain preserved. The subsequent VM continuation and startup policy
+do not establish full installed-plugin or release acceptance. Publication is a
+source checkpoint, not an engine deployment or proof of responsiveness.
