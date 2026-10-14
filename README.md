@@ -2,17 +2,19 @@
 
 Experimental native QML popover for the **original ChatGPT website** inside the
 existing Omarchy shell. This is a research checkpoint, not a working release.
-**An embedded engine has not been selected.**
+**QtWebEngine/Chromium is the speed-first baseline, not an accepted release.**
 
 ## Current state
 
-- Chromium is retained as historical source, not the intended solution.
-- WPE WebKit did not meet the memory goal.
-- Servo is an incomplete local experiment. It has not met the responsiveness,
-  memory, authentication or full website-functionality requirements.
-- The reported overlapping page strip after Reload remains unresolved.
-- The target remains a usable working chat with roughly threefold lower memory,
-  toward 200 MiB. No candidate has demonstrated it.
+- The priority is responsiveness: opening, reopening, scrolling and reliable Reload.
+  The former 400 MiB ceiling and threefold-memory-reduction target are retired.
+- The Chromium path already retains its browser when hidden. Measure that warm
+  path separately from cold startup, cached process restart and page Reload.
+- WPE, Servo and Ladybird remain experiments, not accepted replacements.
+- A separate saved-response rendering failure also appeared in Chromium; its
+  cause remains unresolved. A fast empty or failed page is not a successful result.
+- The target is a stable, speed-verified shared-shell configuration.
+  No candidate has demonstrated it.
 
 See [engine status](docs/engine-status.md) for the handoff.
 
