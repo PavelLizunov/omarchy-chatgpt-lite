@@ -1,8 +1,6 @@
 --- a/src/launch/launch.cpp
 +++ b/src/launch/launch.cpp
-@@ -282,7 +282,8 @@
- 	delete coreApplication;
- 
+@@ -284,4 +284,5 @@
  	QGuiApplication* app = nullptr;
 -	auto qArgC = 0;
 +	// Preserve argv[0]: Qt WebEngine requires a nonempty application argument list.

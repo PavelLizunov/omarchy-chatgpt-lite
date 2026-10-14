@@ -110,13 +110,43 @@ The current inert Content/Browser preview rendered with contained geometry, but
 strict offscreen diagnostics failed on Vulkan/GPU warnings. The original native
 browser test baseline also remains red; targeted checks do not replace that gate.
 
+## Shared-shell continuation
+
+The actual Omarchy shell in VM107 loaded the assembled plugin with the corrected
+engine selector and a compatible 0.3.1 host. The popover was 460×560/DPR1; its
+original-site viewport was 456×484 because the native header and border reserve
+space. One saved-task start and native IPC Reload passed exact response admission
+in 151.2 and 157.7 seconds. Two further starts passed at 71.9 and 125.8 seconds.
+Native images show the actual header and response body, not a full first-frame
+proof. This different geometry/workload cannot yield a standalone speedup ratio.
+
+The shared-shell campaign retained failures: incorrect engine selection before
+the null fix, two shell-IPC startup-selection failures, missed pointer coordination,
+and a Wayland `wtype` timeout. A timely QEMU click did focus the unique empty
+editor, but typing, draft retention and cleanup did not pass in the shared shell.
+The final two starts failed readiness, including `Page.createIsolatedWorld timeout`
+and a still-loading page. Correct route/composer with no response blocks was not
+admitted. Strict isolation is therefore not an accepted stable shared-shell fix.
+
+Eight finite replacement-host attempts created five browser instances, five task
+navigations and one actual Reload, with zero submissions. This is separate from
+the earlier standalone campaign. After every attempt the candidate host stopped,
+the original shell.json bytes were restored and the test plugin was unloaded.
+The task-owned profile/cache and any possible partial draft were retained privately.
+The VM's ordinary shell was restored and responded to PID-specific IPC.
+No workaround bypassed the host guard or weakened site protections.
+
 ## Chromium startup policy
 
 `native/chromium-env.sh HOST [ARGUMENT ...]` is an opt-in startup prefix for the
 existing managed compatible host. It sets `CHATGPT_LITE_ENGINE=chromium`, appends
 `--site-per-process` to existing QtWebEngine flags and `exec`s the supplied argv.
-The source service selects Chromium for that opt-in; explicit Servo selection
-still takes precedence and the default WPE path is unchanged. Engine-scoped
+The source service selects Chromium for that opt-in; an explicit nonempty Servo
+socket still takes precedence and the default WPE path is unchanged. The shared
+VM consumer exposed a selector defect: `Quickshell.env` returns null when unset,
+so comparing it directly with an empty string incorrectly selected Servo. The
+binding now normalizes an absent socket to empty; null and empty cases are covered
+by the startup-policy regression. Engine-scoped
 profiles are retained; the wrapper performs no authentication migration.
 
 The wrapper adds no debugger, sandbox exception, website patch, service or
@@ -148,6 +178,10 @@ compatible. This is unrelated to the retired memory target.
 VM browser-component checks do not establish installed shared-shell acceptance.
 The source startup policy has not been installed in the workstation host, the
 running engine has not switched, and no workstation test window was opened.
+A pinned Quickshell 0.3.2 host with the argv0 patch was built against the current
+workstation Qt packages. Its inert offscreen consumer reported argc1 and a ready
+off-record profile, then stopped normally. Full production-shell/GPU compatibility
+is not established by that check. The patch now applies to both 0.3.1 and 0.3.2.
 
 The original local Servo workspace is
 `~/.local/share/chatgpt-servo-repair-Ar9ArjX8`. It remains untouched for recovery.

@@ -26,14 +26,24 @@ assert(read('native/Browser.qml').includes('lifecycleState: WebEngineView.Lifecy
 
 const wpeExpression = service.match(/property bool useWpe: ([^\n]+)/)?.[1];
 assert(wpeExpression, 'Engine selection binding is required');
+const servoExpression = service.match(/property bool useServo: ([^\n]+)/)?.[1];
+assert(servoExpression, 'Servo selection binding is required');
 const chooseWpe = new Function('fixtureMode', 'useServo', 'Quickshell', `return ${wpeExpression}`);
-for (const [fixture, servo, engine, expected] of [
-  [false, false, '', true], [false, false, 'chromium', false],
-  [false, false, 'unknown', true], [false, true, 'chromium', false],
-  [true, false, '', false], [true, false, 'chromium', false]
-]) assert.equal(chooseWpe(fixture, servo, {env: name => {
-  assert.equal(name, 'CHATGPT_LITE_ENGINE'); return engine;
-}}), expected);
+const chooseServo = new Function('fixtureMode', 'Quickshell', `return ${servoExpression}`);
+// Quickshell.env returns null for an unset variable, not an empty string.
+for (const [fixture, socket, engine, expected] of [
+  [false, null, null, 'wpe'], [false, '', '', 'wpe'],
+  [false, null, 'chromium', 'chromium'], [false, '', 'chromium', 'chromium'],
+  [false, null, 'unknown', 'wpe'], [false, '/owned/socket', 'chromium', 'servo'],
+  [true, '/owned/socket', 'chromium', 'chromium'], [true, null, null, 'chromium']
+]) {
+  const shell = {env: name => {
+    assert(['CHATGPT_LITE_ENGINE', 'CHATGPT_SERVO_NATIVE_SOCKET'].includes(name));
+    return name === 'CHATGPT_LITE_ENGINE' ? engine : socket;
+  }};
+  const servo = chooseServo(fixture, shell);
+  assert.equal(servo ? 'servo' : chooseWpe(fixture, servo, shell) ? 'wpe' : 'chromium', expected);
+}
 
 const launcher = resolve(root, 'native/chromium-env.sh');
 const args = ['two words', '', '$(not-a-command)', '--literal=;'];

@@ -61,7 +61,7 @@ Item {
     property bool fixtureMode: false
     property bool useWpe: !fixtureMode && !useServo && Quickshell.env("CHATGPT_LITE_ENGINE") !== "chromium"
     // Explicit environment opt-in; no implicit replacement or profile migration.
-    property bool useServo: !fixtureMode && Quickshell.env("CHATGPT_SERVO_NATIVE_SOCKET") !== ""
+    property bool useServo: !fixtureMode && (Quickshell.env("CHATGPT_SERVO_NATIVE_SOCKET") || "") !== ""
     property string servoSocketPath: Quickshell.env("CHATGPT_SERVO_NATIVE_SOCKET") || ""
     property string fixtureHtml: ""
     // Off by default. Enable only for an explicitly consented local capture.
